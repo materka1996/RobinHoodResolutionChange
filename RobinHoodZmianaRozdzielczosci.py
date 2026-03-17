@@ -1,16 +1,16 @@
 import binascii
 import os
-import sys
+import shutil
 from tkinter import (
     messagebox,
     filedialog,
-    Label,
-    StringVar,
     Tk,
     ttk,
+    StringVar
 )
 
-mapowanie_wartosci = {
+# Mapowanie rozdzielczości na wartości HEX
+MAPOWANIE_WARTOSCI = {
     '640x480': '804400004044',
     '800x600': '20440000F043',
     '1024x768': '484400001644',
@@ -23,53 +23,141 @@ mapowanie_wartosci = {
     '2560x1440': '20450000B444',
     '1440x900': '00B444006144',
 }
-messagebox.showinfo("Ważne!", "Drogi Użytkowniku \nProszę wybrać plik Profiles z Data/Savegame/Profiles")
-open_file = filedialog.askopenfilename(title="Wybierz plik Profiles z savegames direction", filetypes=[("All file", "*.*"), ("Pliki binarne", "*.bin;*.dat;*.sav")])
-if not open_file:
-    sys.exit()
-def read_file_contents():
-    with open(open_file, 'rb') as f:
-        file_contents = f.read()
 
-    return binascii.hexlify(file_contents).decode('utf-8')
+class ResolutionChanger:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("SaveGame Res Changer Ultimate")
+        self.root.geometry("400x380")
+        self.file_path = ""
+        self.current_file_hex = ""
 
-def write_file_contents(file_path, contents):
-    with open(file_path, 'wb') as f:
-        f.write(binascii.unhexlify(contents))
+        self.setup_ui()
 
-root = Tk()
-root.geometry("300x200")
+    def setup_ui(self):
+        # Nagłówek
+        ttk.Label(self.root, text="Edytor Rozdzielczości Savegame", font=('Helvetica', 10, 'bold')).pack(pady=10)
 
-combobox = ttk.Combobox(root, values=list(mapowanie_wartosci.keys()))
-combobox.pack(pady=20)
+        # Sekcja wyboru pliku
+        self.btn_open = ttk.Button(self.root, text="Wybierz plik Profiles", command=self.select_file)
+        self.btn_open.pack(pady=5)
 
-label = ttk.Label(root, text="Wybierz nową rozdzielczość i kliknij: Wybierz, a \nnastępnie Zamknij program")
-label.pack()
-def on_button_click():
-    result = read_file_contents().upper()
+        self.lbl_file = ttk.Label(self.root, text="Nie wybrano pliku", foreground="gray")
+        self.lbl_file.pack()
 
-    selected_value = combobox.get()
+        # Sekcja detekcji
+        self.lbl_current_res = ttk.Label(self.root, text="Aktualna rozdzielczość: ---", font=('Helvetica', 9, 'italic'))
+        self.lbl_current_res.pack(pady=10)
 
-    if selected_value in mapowanie_wartosci.keys():
-        for key, value in mapowanie_wartosci.items():
-            if value in result:
-                result = result.replace(value, mapowanie_wartosci[selected_value], 1)
-                write_file_contents(open_file, result)
-                print(f"Nowa wartość zmiennej result po zamianie {value} na {mapowanie_wartosci[selected_value]}:", result)
-                print("Plik został nadpisany.")
-                button['state'] = 'disabled'
-                messagebox.showinfo("Informacja", "Plik został nadpisany")
-    else:
-        print(f"Podana wartość {selected_value} nie jest poprawną wartością z mapowania.")
-        print(list(mapowanie_wartosci.keys()))
+        # Sekcja wyboru nowej rozdzielczości
+        ttk.Label(self.root, text="Wybierz nową rozdzielczość:").pack()
+        self.res_var = StringVar()
+        self.combobox = ttk.Combobox(self.root, textvariable=self.res_var, values=list(MAPOWANIE_WARTOSCI.keys()), state="readonly")
+        self.combobox.pack(pady=5)
+        
+        # Przycisk zapisu
+        self.btn_apply = ttk.Button(self.root, text="Zastosuj zmiany", command=self.apply_changes, state="disabled")
+        self.btn_apply.pack(pady=10)
 
-def on_button2_click():
-    # Funkcja, która zamyka program
-    os._exit(0)
+        # Sekcja przywracania backupu
+        self.separator = ttk.Separator(self.root, orient='horizontal')
+        self.separator.pack(fill='x', padx=20, pady=10)
 
-button = ttk.Button(root, text="Wybierz", command=on_button_click)
-button.pack()
-button2 = ttk.Button(root, text="Zamknij program", command=on_button2_click)
-button2.pack()
+        self.btn_restore = ttk.Button(self.root, text="Przywróć z kopii zapasowej (.bak)", command=self.restore_backup, state="disabled")
+        self.btn_restore.pack(pady=5)
+        
+        self.lbl_backup_status = ttk.Label(self.root, text="", font=('Helvetica', 8))
+        self.lbl_backup_status.pack()
 
-root.mainloop()
+    def check_backup_availability(self):
+        """Sprawdza czy plik .bak istnieje i aktualizuje stan przycisku."""
+        if self.file_path:
+            backup_path = self.file_path + ".bak"
+            if os.path.exists(backup_path):
+                self.btn_restore.config(state="normal")
+                self.lbl_backup_status.config(text="Kopia zapasowa jest dostępna", foreground="green")
+            else:
+                self.btn_restore.config(state="disabled")
+                self.lbl_backup_status.config(text="Brak kopii zapasowej", foreground="gray")
+
+    def select_file(self):
+        path = filedialog.askopenfilename(title="Wybierz plik Profiles", filetypes=[("Pliki binarne", "*.bin;*.dat;*.sav"), ("Wszystkie", "*.*")])
+        if path:
+            self.file_path = path
+            self.lbl_file.config(text=f"Plik: {os.path.basename(path)}", foreground="black")
+            self.detect_current_resolution()
+            self.check_backup_availability()
+
+    def detect_current_resolution(self):
+        try:
+            with open(self.file_path, 'rb') as f:
+                self.current_file_hex = binascii.hexlify(f.read()).decode('utf-8').upper()
+
+            detected = "Nieznana (brak w bazie)"
+            for res_name, hex_val in MAPOWANIE_WARTOSCI.items():
+                if hex_val in self.current_file_hex:
+                    detected = res_name
+                    break
+            
+            self.lbl_current_res.config(text=f"Aktualna rozdzielczość: {detected}", foreground="blue")
+            self.btn_apply.config(state="normal")
+            
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Nie można odczytać pliku: {e}")
+
+    def apply_changes(self):
+        new_res = self.res_var.get()
+        if not new_res:
+            messagebox.showwarning("Uwaga", "Wybierz rozdzielczość z listy!")
+            return
+
+        if not messagebox.askyesno("Potwierdzenie", f"Czy na pewno chcesz zmienić rozdzielczość na {new_res}?"):
+            return
+
+        try:
+            # Tworzenie backupu przed zmianą (jeśli jeszcze nie istnieje)
+            backup_path = self.file_path + ".bak"
+            if not os.path.exists(backup_path):
+                shutil.copy2(self.file_path, backup_path)
+
+            new_hex = MAPOWANIE_WARTOSCI[new_res]
+            found = False
+            
+            updated_content = self.current_file_hex
+            for old_hex in MAPOWANIE_WARTOSCI.values():
+                if old_hex in updated_content:
+                    updated_content = updated_content.replace(old_hex, new_hex, 1)
+                    found = True
+                    break
+
+            if found:
+                with open(self.file_path, 'wb') as f:
+                    f.write(binascii.unhexlify(updated_content))
+                
+                messagebox.showinfo("Sukces", "Zmieniono rozdzielczość! Plik .bak został zachowany.")
+                self.detect_current_resolution()
+                self.check_backup_availability()
+            else:
+                messagebox.showerror("Błąd", "Nie znaleziono znanej sekwencji w pliku.")
+
+        except Exception as e:
+            messagebox.showerror("Błąd zapisu", f"Wystąpił błąd: {e}")
+
+    def restore_backup(self):
+        backup_path = self.file_path + ".bak"
+        if not os.path.exists(backup_path):
+            messagebox.showerror("Błąd", "Nie znaleziono pliku kopii zapasowej!")
+            return
+
+        if messagebox.askyesconfirm("Przywracanie", "Czy chcesz przywrócić plik z kopii zapasowej? Obecne zmiany zostaną nadpisane."):
+            try:
+                shutil.copy2(backup_path, self.file_path)
+                messagebox.showinfo("Przywrócono", "Pomyślnie przywrócono oryginalny plik.")
+                self.detect_current_resolution() # Aktualizacja UI
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Nie udało się przywrócić pliku: {e}")
+
+if __name__ == "__main__":
+    root = Tk()
+    app = ResolutionChanger(root)
+    root.mainloop()
